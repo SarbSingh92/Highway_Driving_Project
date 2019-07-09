@@ -1,3 +1,4 @@
+
 #include <uWS/uWS.h>
 #include <fstream>
 #include <iostream>
@@ -51,10 +52,10 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
   
-  int lane = 1; //the car begins in lane 1 (default by simulator) 
+  int lane = 1; 
   double dist_inc = 0.5; 
-  double max_speed = .224; //This is the starting speed for the car 
-  string state = "KL"; // Car begins in the Keep lane state  
+  double max_speed = .224; //This is the max speed you want to reach in MPH
+  string states = "KL"; // Car begins in the Keep lane statel  
   
   h.onMessage([&state, &lane, &max_speed, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,
                &map_waypoints_dx,&map_waypoints_dy]
@@ -95,7 +96,6 @@ int main() {
           // Sensor Fusion Data, a list of all other cars on the same side 
           //   of the road.
           auto sensor_fusion = j[1]["sensor_fusion"];
-        
 
           json msgJson;
 
@@ -113,47 +113,38 @@ int main() {
             car_s = end_path_s; 
           }
           
-          if (state == "KL")
+          bool too_close = false; 
+          //find max_speed to use
+          for(int i = 0; i < sensor_fusion.size(); i++)
           {
-            //std::cout<<"KL"<<std::endl;
-          
-          	bool too_close = false; //flag to indicate if car infront of vehicle is too close 
-            double check_speed; //stores speed of vehicles around the car
-          	//find max_speed to use
-          	for(int i = 0; i < sensor_fusion.size(); i++)
-          	{
-            	//car is in my lane
-            	float d = sensor_fusion[i][6]; 
-              	
-            	if (d < (2+4*lane+2) && d > (2+4*lane-2)) //checks if cars are in the same lane 
-            	{
-              		double vx = sensor_fusion[i][3];
-              		double vy = sensor_fusion[i][4];
-              		check_speed = sqrt(vx*vx+vy*vy);
-              		double check_car_s = sensor_fusion[i][5]; 
-              		//if using previous points can project s value out 
-              		check_car_s += ((double)prev_size*0.02*check_speed); 
-              		//check s values greater than mine and s gap
-              		if((check_car_s > car_s) && ((check_car_s - car_s) < 30)) //if car is with 30m than set too close flag
-              		{
-                		too_close = true;   
-              		}
-            	}
-          	}
-          
-          	if(too_close && car_speed > check_speed && car_speed > 30) // decrease speed if too close to the speed of the car ahead but not below 30MPH 
-          	{
-            	max_speed -= .4; 
-          	}
-          	else if (max_speed < 49.5) //increase speed if it is below the max limit 
-          	{
-           	 max_speed += .4; 
-          	}
-            //check if speed is below 20% of limit. If yes, change state to see if Lane change is possible 
-            if (too_close == true && max_speed < 40)
+            //car is in my lane
+            float d = sensor_fusion[i][6]; 
+            if (d < (2+4*lane+2) && d > (2+4*lane-2))
             {
-              state = "PLC"; //State change to prep lane change 
+              double vx = sensor_fusion[i][3];
+              double vy = sensor_fusion[i][4];
+              double check_speed = sqrt(vx*vx+vy*vy);
+              double check_car_s = sensor_fusion[i][5]; 
+              //if using previous points can project s value out 
+              check_car_s += ((double)prev_size*0.02*check_speed); 
+              //check s values greater than mine and s gap
+              if((check_car_s > car_s) && ((check_car_s - car_s) < 30))
+              {
+                //Do some logic here, lower reference velocity so we don't crash into the car infront 
+                //max_speed = 29.5; 
+                too_close = true;   
+              }
             }
+          }
+          
+          if(too_close)
+          {
+            max_speed -= .224; 
+           
+          }
+          else if (max_speed < 49.5)
+          {
+            max_speed += .224; 
           }
           
     
@@ -194,127 +185,9 @@ int main() {
             ptsy.push_back(ref_y_prev); 
             ptsy.push_back(ref_y); 
           }
-          
-          double trans_car_s; 
-          
-          if ( state == "PLC") //Prepare lane change state 
-          {
-            //std::cout<<"PLC"<<std::endl;
-            //Use Sensor Fusion data to check left and right lane for cars. If cars are not within a buffer zone, switch state to lane change left or right
            
-            //track cost of lane change. Only a cost of zero will result in change 
-            int right_cost = 0; 
-            int left_cost = 0; 
-            
-            if (lane != 2) //if not in right most lane, check if right lane change is possible 
-            {
-               
-                for(int i = 0; i < sensor_fusion.size(); i++)
-              	{
-                  //are there cars in lane to the right
-                  float d = sensor_fusion[i][6]; 
-                  //std::cout<<"car d for right lane = "<<d<<std::endl;
-                  if (d < ((4*lane+8)) && d > ((4*lane+4)))
-                  {
-                      double vx = sensor_fusion[i][3];
-                      double vy = sensor_fusion[i][4];
-                      double check_speed = sqrt(vx*vx+vy*vy);
-                      double check_car_s = sensor_fusion[i][5]; 
-                      //if using previous points can project s value out 
-                      check_car_s += ((double)prev_size*0.02*check_speed);
-                      //std::cout<<"check cas s = "<<check_car_s<<std::endl;
-                      //std::cout<<"car s = "<<car_s<<std::endl;
-                      //check if car is outside of space needed for lane change 
-                      if((check_car_s - car_s) < 40 && (check_car_s - car_s) > -10) //Increase cost if cars are within 40m ahead and 10m behind car
-                      {
-                          //increase cost if car in right lane is less than range expected
-                          //std::cout<<"cost up"<<std::endl;
-                          right_cost += 1;    
-                      }            
-                  }
-               }
-            }
-            else //if in the right most lane, increase cost 
-            {
-              right_cost+=1; 
-            }
-            if (lane != 0)//if not in left most lane, check if left lane change is possible 
-            {
-             
-              for(int i = 0; i < sensor_fusion.size(); i++)
-              	{
-                  //are there cars in lane to the left
-                  float d = sensor_fusion[i][6]; 
-                  //std::cout<<"car d for left lane = "<<d<<std::endl;
-                  //std::cout<<"my lane is  = "<<lane<<std::endl;
-                  if (d > ((4*lane-4)) && d < (4*lane))
-                  {
-                      double vx = sensor_fusion[i][3];
-                      double vy = sensor_fusion[i][4];
-                      double check_speed = sqrt(vx*vx+vy*vy);
-                      double check_car_s = sensor_fusion[i][5]; 
-                      //if using previous points can project s value out 
-                      check_car_s += ((double)prev_size*0.02*check_speed); 
-                      //check s values greater than mine and s gap
-                      //std::cout<<"check cas s = "<<check_car_s<<std::endl;
-                      //std::cout<<"car s = "<<car_s<<std::endl;
-                      if((check_car_s - car_s) < 40 && (check_car_s - car_s) > -10)
-                      {
-                          //increase cost if car in right lane is less than range expected 
-                          std::cout<<"cost up"<<std::endl;
-                          left_cost += 1;    
-                      }            
-                  }
-              }
-            }
-            else
-            {
-              left_cost +=1; 
-            }
-            //set appropriate state depending on costs caluclated and set lane variable 
-            if(right_cost == 0)
-            {
-            	lane +=1;
-                
-                state = "LCR";
-            }
-            else if (left_cost == 0)
-            {
-                lane -=1; 
-                
-                state = "LCL";
-            }
-            else
-            {
-                state = "KL"; 
-            }
-          }
-          
-          if(state == "LCR")
-          {
-            //std::cout<<"LCR"<<std::endl; 
-            //std::cout<<"car d = "<<car_d<<std::endl; 
-            //std::cout<<"lane ="<<4*lane+2<<std::endl; 
-            if(car_d < (2+4*lane+2) && car_d > (2+4*lane-2)) // exit lane change state once car is well into the next lane 
-            {
-              //std::cout<<"entered"<<std::endl;
-              state = "KL";
-            }
-          }
-          
-          if(state == "LCL")
-          {
-            //std::cout<<"LCL"<<std::endl;
-            //std::cout<<"car d = "<<car_d<<std::endl; 
-            //std::cout<<"lane ="<<4*lane+2<<std::endl; 
-            if(car_d < (2+4*lane+1) && car_d > (2+4*lane-1))
-            {
-              //std::cout<<"entered"<<std::endl;
-              state = "KL";
-            }
-          }
-         
           //In Frenet add 30m evenly spaced points ahead of the car 
+          
           vector<double> waypoint_30 = getXY(car_s+30, (lane*4+2), map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> waypoint_60 = getXY(car_s+60, (lane*4+2), map_waypoints_s, map_waypoints_x, map_waypoints_y);
           vector<double> waypoint_90 = getXY(car_s+90, (lane*4+2), map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -357,7 +230,7 @@ int main() {
           double target_dist = sqrt((target_x)*(target_x)+(target_y)*(target_y)); 
           
           double x_add_on = 0; 
-          //generate the trajectory 
+          
           for ( int i = 1; i <= 50 - previous_path_x.size(); i++)
           {
             double N = (target_dist/(0.02*max_speed/2.24)); 
@@ -375,10 +248,23 @@ int main() {
             
             x_point += ref_x; 
             y_point += ref_y; 
-            //push values into vector for simuator 
+            
             next_x_vals.push_back(x_point); 
             next_y_vals.push_back(y_point); 
           }
+          
+          /*
+          vector<double> next_x_vals; 
+          vector<double> next_y_vals;
+          for (int i = 0; i < 50; i++)
+          {
+          	double next_s = car_s+(i+1)*0.5; 
+            double next_d = 0*4+2; 
+            vector<double> xy = getXY(next_s, next_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            next_x_vals.push_back(xy[0]); 
+            next_y_vals.push_back(xy[1]);
+          }*/
+          
           
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
@@ -393,7 +279,6 @@ int main() {
         ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
       }
     }  // end websocket if
-    
   }); // end h.onMessage
 
   h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
